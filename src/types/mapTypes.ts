@@ -34,3 +34,22 @@ export type OfflineMapStatus =
   | 'DOWNLOADING'
   | 'DOWNLOADED'
   | 'FAILED';
+
+export type CurrentLocationDetails = {
+  latitude: number;
+  longitude: number;
+  city?: string;
+  district?: string;
+  state?: string;
+  stateCode?: string;
+  country?: string;
+  countryCode?: string;
+  postcode?: string;
+  displayName?: string;
+  boundingBox?: {
+    south: number;
+    north: number;
+    west: number;
+    east: number;
+  };
+};

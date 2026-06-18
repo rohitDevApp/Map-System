@@ -1,9 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
-  Map,
+  Map as MLMap,
   Camera,
-  Marker,
   GeoJSONSource,
   Layer,
   type CameraRef,
@@ -20,6 +19,7 @@ type Props = {
   mapAccess: StateMapAccess;
   currentLocation: Coordinates | null;
   selectedLocation: OfflineLocation | null;
+  mapLocations?: OfflineLocation[];
   onSaveSelected?: () => void;
 };
 
@@ -30,14 +30,11 @@ const MapViewPanel: React.FC<Props> = ({
   mapAccess,
   currentLocation,
   selectedLocation,
+  mapLocations = [],
   onSaveSelected,
 }) => {
   const cameraRef = useRef<CameraRef>(null);
-
   const [zoomLevel, setZoomLevel] = useState(6);
-  const [focusMode, setFocusMode] = useState<'STATE' | 'CURRENT' | 'SELECTED'>(
-    'STATE',
-  );
 
   const stateCenterCoordinate: [number, number] = useMemo(() => {
     const [swLng, swLat] = mapAccess.bounds.southWest;
@@ -47,14 +44,6 @@ const MapViewPanel: React.FC<Props> = ({
   }, [mapAccess]);
 
   const centerCoordinate: [number, number] = useMemo(() => {
-    if (focusMode === 'SELECTED' && selectedLocation) {
-      return [selectedLocation.longitude, selectedLocation.latitude];
-    }
-
-    if (focusMode === 'CURRENT' && currentLocation) {
-      return [currentLocation.longitude, currentLocation.latitude];
-    }
-
     if (selectedLocation) {
       return [selectedLocation.longitude, selectedLocation.latitude];
     }
@@ -64,30 +53,36 @@ const MapViewPanel: React.FC<Props> = ({
     }
 
     return stateCenterCoordinate;
-  }, [focusMode, selectedLocation, currentLocation, stateCenterCoordinate]);
+  }, [selectedLocation, currentLocation, stateCenterCoordinate]);
 
-  const routeGeoJson = useMemo(() => {
-    if (!currentLocation || !selectedLocation) {
-      return null;
+  const moveCamera = (
+    coordinate: [number, number],
+    zoom: number,
+    duration = 500,
+  ) => {
+    const camera = cameraRef.current as any;
+
+    if (camera?.easeTo) {
+      camera.easeTo({
+        center: coordinate,
+        zoom,
+        duration,
+      });
+      return;
     }
 
-    return {
-      type: 'FeatureCollection' as const,
-      features: [
-        {
-          type: 'Feature' as const,
-          properties: {},
-          geometry: {
-            type: 'LineString' as const,
-            coordinates: [
-              [currentLocation.longitude, currentLocation.latitude],
-              [selectedLocation.longitude, selectedLocation.latitude],
-            ],
-          },
-        },
-      ],
-    };
-  }, [currentLocation, selectedLocation]);
+    camera?.jumpTo?.({
+      center: coordinate,
+    });
+
+    camera?.zoomTo?.(zoom, {
+      duration,
+    });
+  };
+
+  const handleMapReady = () => {
+    moveCamera(centerCoordinate, zoomLevel, 0);
+  };
 
   const handleZoomIn = () => {
     setZoomLevel(prev => {
@@ -115,7 +110,6 @@ const MapViewPanel: React.FC<Props> = ({
       currentLocation.latitude,
     ];
 
-    setFocusMode('CURRENT');
     setZoomLevel(14);
     moveCamera(coordinate, 14);
   };
@@ -130,32 +124,113 @@ const MapViewPanel: React.FC<Props> = ({
       selectedLocation.latitude,
     ];
 
-    setFocusMode('SELECTED');
     setZoomLevel(14);
     moveCamera(coordinate, 14);
   };
 
   const handleFocusState = () => {
-    setFocusMode('STATE');
     setZoomLevel(6);
     moveCamera(stateCenterCoordinate, 6);
   };
 
-  const moveCamera = (
-    coordinate: [number, number],
-    zoom: number,
-    duration = 500,
-  ) => {
-    const camera = cameraRef.current as any;
+  const currentLocationGeoJson = useMemo(() => {
+    if (!currentLocation) {
+      return null;
+    }
 
-    camera?.jumpTo?.({
-      center: coordinate,
+    return {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {
+            title: 'My Location',
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [currentLocation.longitude, currentLocation.latitude],
+          },
+        },
+      ],
+    };
+  }, [currentLocation]);
+
+  const selectedLocationGeoJson = useMemo(() => {
+    if (!selectedLocation) {
+      return null;
+    }
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {
+            title: selectedLocation.title,
+          },
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [
+              selectedLocation.longitude,
+              selectedLocation.latitude,
+            ],
+          },
+        },
+      ],
+    };
+  }, [selectedLocation]);
+
+  const locationNamesGeoJson = useMemo(() => {
+    const uniqueMap = new Map<string, OfflineLocation>();
+
+    mapLocations.forEach(item => {
+      uniqueMap.set(item.id, item);
     });
 
-    camera?.zoomTo?.(zoom, {
-      duration,
-    });
-  };
+    if (selectedLocation) {
+      uniqueMap.set(selectedLocation.id, selectedLocation);
+    }
+
+    const locations = Array.from(uniqueMap.values());
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: locations.map(location => ({
+        type: 'Feature' as const,
+        properties: {
+          title: location.title,
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [location.longitude, location.latitude],
+        },
+      })),
+    };
+  }, [mapLocations, selectedLocation]);
+
+  const routeGeoJson = useMemo(() => {
+    if (!currentLocation || !selectedLocation) {
+      return null;
+    }
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          properties: {},
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: [
+              [currentLocation.longitude, currentLocation.latitude],
+              [selectedLocation.longitude, selectedLocation.latitude],
+            ],
+          },
+        },
+      ],
+    };
+  }, [currentLocation, selectedLocation]);
+
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
@@ -171,45 +246,143 @@ const MapViewPanel: React.FC<Props> = ({
         </TouchableOpacity>
       </View>
 
-      <View style={styles.mapWrap}>
-        <Map style={styles.map} mapStyle={MAP_STYLE_URL}>
+      <View style={styles.mapContainer}>
+        <MLMap
+          style={styles.map}
+          mapStyle={MAP_STYLE_URL}
+          // onMapReady={handleMapReady as any}
+        >
           <Camera ref={cameraRef} />
-          {currentLocation ? (
-            <Marker
-              id="current-location"
-              lngLat={[currentLocation.longitude, currentLocation.latitude]}
-            >
-              <View style={styles.currentMarkerOuter}>
-                <View style={styles.currentMarkerInner} />
-              </View>
-            </Marker>
-          ) : null}
-
-          {selectedLocation ? (
-            <Marker
-              id="selected-location"
-              lngLat={[selectedLocation.longitude, selectedLocation.latitude]}
-            >
-              <View style={styles.selectedMarkerOuter}>
-                <View style={styles.selectedMarkerInner} />
-              </View>
-            </Marker>
-          ) : null}
 
           {routeGeoJson ? (
             <GeoJSONSource id="route-source" data={routeGeoJson as any}>
               <Layer
                 id="route-line"
                 type="line"
-                paint={{
-                  'line-width': 4,
-                  'line-color': '#2563EB',
-                  'line-opacity': 0.9,
-                }}
+                paint={
+                  {
+                    'line-width': 4,
+                    'line-color': '#2563EB',
+                    'line-opacity': 0.9,
+                  } as any
+                }
               />
             </GeoJSONSource>
           ) : null}
-        </Map>
+
+          {locationNamesGeoJson.features.length > 0 ? (
+            <GeoJSONSource
+              id="location-names-source"
+              data={locationNamesGeoJson as any}
+            >
+              <Layer
+                id="location-names-layer"
+                type="symbol"
+                layout={
+                  {
+                    'text-field': ['get', 'title'],
+                    'text-size': 13,
+                    'text-offset': [0, 1.5],
+                    'text-anchor': 'top',
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true,
+                  } as any
+                }
+                paint={
+                  {
+                    'text-color': '#111827',
+                    'text-halo-color': '#FFFFFF',
+                    'text-halo-width': 2,
+                  } as any
+                }
+              />
+            </GeoJSONSource>
+          ) : null}
+
+          {currentLocationGeoJson ? (
+            <GeoJSONSource
+              id="current-location-source"
+              data={currentLocationGeoJson as any}
+            >
+              <Layer
+                id="current-location-circle"
+                type="circle"
+                paint={
+                  {
+                    'circle-radius': 7,
+                    'circle-color': '#2563EB',
+                    'circle-stroke-width': 3,
+                    'circle-stroke-color': '#FFFFFF',
+                  } as any
+                }
+              />
+
+              <Layer
+                id="current-location-label"
+                type="symbol"
+                layout={
+                  {
+                    'text-field': ['get', 'title'],
+                    'text-size': 12,
+                    'text-offset': [0, 1.5],
+                    'text-anchor': 'top',
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true,
+                  } as any
+                }
+                paint={
+                  {
+                    'text-color': '#111827',
+                    'text-halo-color': '#FFFFFF',
+                    'text-halo-width': 2,
+                  } as any
+                }
+              />
+            </GeoJSONSource>
+          ) : null}
+
+          {selectedLocationGeoJson ? (
+            <GeoJSONSource
+              id="selected-location-source"
+              data={selectedLocationGeoJson as any}
+            >
+              <Layer
+                id="selected-location-circle"
+                type="circle"
+                paint={
+                  {
+                    'circle-radius': 9,
+                    'circle-color': '#DC2626',
+                    'circle-stroke-width': 3,
+                    'circle-stroke-color': '#FFFFFF',
+                  } as any
+                }
+              />
+
+              <Layer
+                id="selected-location-label"
+                type="symbol"
+                layout={
+                  {
+                    'text-field': ['get', 'title'],
+                    'text-size': 13,
+                    'text-offset': [0, 1.5],
+                    'text-anchor': 'top',
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true,
+                  } as any
+                }
+                paint={
+                  {
+                    'text-color': '#111827',
+                    'text-halo-color': '#FFFFFF',
+                    'text-halo-width': 2,
+                  } as any
+                }
+              />
+            </GeoJSONSource>
+          ) : null}
+        </MLMap>
 
         <View style={styles.zoomControl}>
           <TouchableOpacity style={styles.zoomButton} onPress={handleZoomIn}>
@@ -252,6 +425,7 @@ const MapViewPanel: React.FC<Props> = ({
         <View style={styles.selectedBox}>
           <View style={styles.selectedInfo}>
             <Text style={styles.selectedLabel}>Selected Location</Text>
+
             <Text style={styles.selectedTitle}>{selectedLocation.title}</Text>
 
             <Text style={styles.selectedAddress}>
@@ -328,16 +502,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#2563EB',
   },
-  mapWrap: {
+  mapContainer: {
     marginTop: 12,
     height: 420,
     borderRadius: 14,
-    overflow: 'hidden',
     backgroundColor: '#E5E7EB',
     position: 'relative',
   },
   map: {
     flex: 1,
+    borderRadius: 14,
   },
   zoomControl: {
     position: 'absolute',
@@ -348,13 +522,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
     elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
   },
   zoomButton: {
     height: 42,
@@ -393,38 +560,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  currentMarkerOuter: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(37, 99, 235, 0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  currentMarkerInner: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#2563EB',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  selectedMarkerOuter: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(220, 38, 38, 0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  selectedMarkerInner: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#DC2626',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
   },
   selectedBox: {
     marginTop: 12,
